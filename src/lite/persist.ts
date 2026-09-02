@@ -13,6 +13,7 @@ import { Sched } from '@/core/schedule'
 import type { LiteRoster, LiteSchedule } from './data'
 import type { EditEvent, EditState } from './edit'
 import type { Proposal } from './proposals'
+import type { ConfirmEvent } from './confirm'
 
 /** 스키마 버전. 저장 모양을 바꾸면 올리고, 옛 키를 읽어 옮기는 코드를 둔다. */
 export const SCHEMA = 'v1'
@@ -72,6 +73,9 @@ type WireSession = {
   edit: WireEdit | null
   /** 팀이 보낸 수정 제안과 그 결재 결과 */
   proposals: Proposal[] | null
+  /** 일자별 확정·해제 기록. 확정 시점의 자리(통보한 내용)가 여기 들어 있어서
+      재통보 판정은 이 값 하나로 다시 선다 — 파생값을 따로 저장하지 않는다. */
+  confirms: ConfirmEvent[] | null
 }
 
 type WireEdit = {
@@ -111,6 +115,7 @@ const packEdit = (e: EditState): WireEdit => ({
 export function packSession(
   roster: LiteRoster, schedule: LiteSchedule | null, id = ulid(),
   edit?: EditState | null, proposals?: readonly Proposal[] | null,
+  confirms?: readonly ConfirmEvent[] | null,
 ): WireSession {
   const { parsed, ...rest } = roster
   let wireSchedule: WireSession['schedule'] = null
@@ -124,6 +129,7 @@ export function packSession(
     schedule: wireSchedule,
     edit: edit && edit.events.length ? packEdit(edit) : null,
     proposals: proposals && proposals.length ? [...proposals] : null,
+    confirms: confirms && confirms.length ? [...confirms] : null,
   }
 }
 
@@ -152,7 +158,7 @@ function unpackEdit(base: Result, w: WireEdit): EditState {
 
 export function unpackSession(w: WireSession): {
   id: string; roster: LiteRoster; schedule: LiteSchedule | null
-  edit: EditState | null; proposals: Proposal[]
+  edit: EditState | null; proposals: Proposal[]; confirms: ConfirmEvent[]
 } {
   const roster: LiteRoster = { ...w.roster, parsed: unpackMaster(w.roster.parsed) }
   let schedule: LiteSchedule | null = null
@@ -162,7 +168,7 @@ export function unpackSession(w: WireSession): {
     schedule = { ...w.schedule, result }
     if (w.edit) edit = unpackEdit(result, w.edit)
   }
-  return { id: w.id, roster, schedule, edit, proposals: w.proposals ?? [] }
+  return { id: w.id, roster, schedule, edit, proposals: w.proposals ?? [], confirms: w.confirms ?? [] }
 }
 
 /* ---------- localStorage ---------- */
@@ -173,10 +179,11 @@ export type SaveOutcome = { ok: true; bytes: number } | { ok: false; reason: str
 export function saveSession(
   roster: LiteRoster, schedule: LiteSchedule | null, id?: string,
   edit?: EditState | null, proposals?: readonly Proposal[] | null,
+  confirms?: readonly ConfirmEvent[] | null,
 ): SaveOutcome {
   let text: string
   try {
-    text = JSON.stringify(packSession(roster, schedule, id, edit, proposals))
+    text = JSON.stringify(packSession(roster, schedule, id, edit, proposals, confirms))
   } catch (reason) {
     return { ok: false, reason: reason instanceof Error ? reason.message : '저장할 수 없는 값입니다' }
   }
@@ -191,7 +198,7 @@ export function saveSession(
 /** 읽는다. 없거나 깨졌으면 null — 깨진 값은 지운다. */
 export function loadSession(): {
   id: string; roster: LiteRoster; schedule: LiteSchedule | null
-  edit: EditState | null; proposals: Proposal[]
+  edit: EditState | null; proposals: Proposal[]; confirms: ConfirmEvent[]
 } | null {
   let raw: string | null
   try {

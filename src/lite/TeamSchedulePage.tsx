@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Result } from '@/core/schedule'
+import type { Placed, Result } from '@/core/schedule'
 import type { EditState } from './edit'
 import { iGa } from './hangul'
 import {
   KIND_LABEL, STATUS_LABEL, createProposal, replyText,
   type NewProposal, type Proposal, type ProposalKind,
 } from './proposals'
+import { ApplicantModal } from './ApplicantModal'
 
 /* 팀 담당자 화면 — 우리 팀 면접을 보고, 고쳐 달라고 제안하고, 회신을 읽는다.
 
@@ -28,6 +29,8 @@ const hhmm = (ts: string) => `${ts.slice(5, 10).replace('-', '/')} ${ts.slice(11
 
 export function TeamSchedulePage({ team, who, base, state, proposals, onSend, onGoSchedule, onSeen }: Props) {
   const [pick, setPick] = useState<number | null>(null)
+  /** 지원자 상세 창. 팀 담당자에게는 인적 항목(생년월일·성별·국적·병역)을 가린다 */
+  const [detail, setDetail] = useState<Placed | null>(null)
   const [kind, setKind] = useState<ProposalKind>('move')
   const [toDay, setToDay] = useState(0)
   const [toSlot, setToSlot] = useState(0)
@@ -131,7 +134,11 @@ export function TeamSchedulePage({ team, who, base, state, proposals, onSend, on
                   <td>{base.dates[p.day]?.label}</td>
                   <td>{base.times[p.slot]?.label}</td>
                   <td>{p.room + 1}조</td>
-                  <td><b>{p.app.name}</b><br /><small>{p.edu} · {p.teams.join(' + ')}</small></td>
+                  <td>
+                    <button type="button" className="p-name" onClick={() => setDetail(p)}
+                      title={`${p.app.name} 지원자 상세`}><b>{p.app.name}</b></button>
+                    <br /><small>{p.edu} · {p.teams.join(' + ')}</small>
+                  </td>
                   <td>{p.interviewers.join(', ')}</td>
                   <td>
                     <button type="button" className="switch" onClick={() => {
@@ -233,6 +240,12 @@ export function TeamSchedulePage({ team, who, base, state, proposals, onSend, on
               ))}
             </ul>}
       </div>
+      {detail && (
+        <ApplicantModal
+          p={detail} role="team" onClose={() => setDetail(null)}
+          placementText={`${detail.day + 1}일차 ${base.times[detail.slot]?.label ?? `${detail.slot + 1}세션`} ${detail.room + 1}조`}
+        />
+      )}
     </section>
   )
 }

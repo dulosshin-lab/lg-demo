@@ -22,8 +22,9 @@ const spotText = (r: Result, s: { day: number; slot: number; room: number }) =>
 /** 셀 안에서 여러 값을 잇는 구분자 — 기존 산출물 규칙대로 쉼표를 쓴다 */
 const join = (xs: readonly string[]) => xs.join(', ')
 
-export function buildRows(base: Result, state: EditState) {
+export function buildRows(base: Result, state: EditState, links: readonly string[] = []) {
   const sorted = [...state.placed].sort((a, b) => a.day - b.day || a.slot - b.slot || a.room - b.room)
+  const hasLink = links.some(Boolean)
   return sorted.map(p => ({
     일자: base.dates[p.day]?.label ?? `${p.day + 1}일차`,
     시간: base.times[p.slot]?.label ?? `${p.slot + 1}세션`,
@@ -32,6 +33,8 @@ export function buildRows(base: Result, state: EditState) {
     학력: p.edu,
     팀: join(p.teams),
     면접관: join(p.interviewers),
+    // 조가 곧 면접방이라 링크도 조를 따라간다 — 안 넣었으면 열 자체를 만들지 않는다
+    ...(hasLink ? { 화상: links[p.room] ?? '' } : {}),
   }))
 }
 
@@ -40,7 +43,10 @@ export function buildChanges(base: Result, state: EditState) {
     순번: e.seq,
     시각: e.ts,
     담당자: e.actorName,
-    구분: { move: '이동', swap: '교환', remove: '배정 취소', place: '배정', ack: '예외 표시', unack: '예외 해제' }[e.op],
+    구분: {
+      move: '이동', swap: '교환', remove: '배정 취소', place: '배정',
+      ack: '예외 표시', unack: '예외 해제', reschedule: '다시 편성',
+    }[e.op],
     지원자: e.appName || '—',
     이전: e.from ? spotText(base, e.from) : '—',
     이후: e.to ? spotText(base, e.to) : '—',
@@ -85,18 +91,27 @@ export function toCsv(rows: readonly Record<string, string | number>[], emptyNot
   return BOM + lines.join('\r\n') + '\r\n'
 }
 
-/** 파일 이름 — 언제 내보낸 것인지 한눈에 */
-export function fileNameOf(at: Date = new Date()): string {
+/** 파일 이름에 쓸 수 있게 다듬는다 — 경로 문자와 공백은 빼고 적당히 자른다 */
+export const safeName = (name: string) =>
+  name.trim().replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').slice(0, 40)
+
+/** 파일 이름 — 어느 전형인지, 언제 내보낸 것인지 한눈에 */
+export function fileNameOf(at: Date = new Date(), name = ''): string {
   const p = (n: number) => String(n).padStart(2, '0')
-  return `면접편성_${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}_${p(at.getHours())}${p(at.getMinutes())}.xlsx`
+  const head = safeName(name)
+  const stamp = `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}_${p(at.getHours())}${p(at.getMinutes())}`
+  return `${head ? `${head}_` : ''}면접편성_${stamp}.xlsx`
 }
 
-export async function buildWorkbookBlob(base: Result, state: EditState, verdict: Judgement): Promise<Blob> {
+export async function buildWorkbookBlob(
+  base: Result, state: EditState, verdict: Judgement, setup?: ExportSetup,
+): Promise<Blob> {
   const ExcelJS = await excel()
   const wb = new ExcelJS.Workbook()
   wb.created = new Date()
+  if (setup?.name) wb.title = setup.name
 
-  sheetFrom(wb.addWorksheet('편성표') as never, buildRows(base, state))
+  sheetFrom(wb.addWorksheet('편성표') as never, buildRows(base, state, setup?.links ?? []))
 
   const changes = buildChanges(base, state)
   const ws = wb.addWorksheet('변경 요약')
@@ -124,18 +139,25 @@ function download(blob: Blob, name: string): string {
   return name
 }
 
-export async function exportSchedule(base: Result, state: EditState, verdict: Judgement): Promise<string> {
-  return download(await buildWorkbookBlob(base, state, verdict), fileNameOf())
+/** 내보내기가 필요로 하는 전형 설정 조각 — 설정 전체를 끌고 오지 않는다 */
+export type ExportSetup = { readonly name?: string; readonly links?: readonly string[] }
+
+export async function exportSchedule(
+  base: Result, state: EditState, verdict: Judgement, setup?: ExportSetup,
+): Promise<string> {
+  return download(await buildWorkbookBlob(base, state, verdict, setup), fileNameOf(new Date(), setup?.name))
 }
 
 /** 편성표만 CSV 로. 다른 도구에 붙여 넣거나 메일에 싣기 좋은 형태다. */
-export function exportCsv(base: Result, state: EditState): string {
-  const text = toCsv(buildRows(base, state), '배정된 면접이 없습니다.')
-  return download(new Blob([text], { type: 'text/csv;charset=utf-8' }), fileNameOf().replace(/\.xlsx$/, '.csv'))
+export function exportCsv(base: Result, state: EditState, setup?: ExportSetup): string {
+  const text = toCsv(buildRows(base, state, setup?.links ?? []), '배정된 면접이 없습니다.')
+  return download(new Blob([text], { type: 'text/csv;charset=utf-8' }),
+    fileNameOf(new Date(), setup?.name).replace(/\.xlsx$/, '.csv'))
 }
 
 /** 변경 요약만 CSV 로 — 「무엇이 바뀌었나」만 팀에 돌릴 때 */
-export function exportChangesCsv(base: Result, state: EditState): string {
+export function exportChangesCsv(base: Result, state: EditState, setup?: ExportSetup): string {
   const text = toCsv(buildChanges(base, state), '1차 편성 이후 고친 것이 없습니다.')
-  return download(new Blob([text], { type: 'text/csv;charset=utf-8' }), fileNameOf().replace(/\.xlsx$/, '_변경요약.csv'))
+  return download(new Blob([text], { type: 'text/csv;charset=utf-8' }),
+    fileNameOf(new Date(), setup?.name).replace(/\.xlsx$/, '_변경요약.csv'))
 }

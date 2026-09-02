@@ -416,9 +416,34 @@ describe('승인 되돌리기', () => {
 describe('승인하면 생기는 일 — 미리 알림', () => {
   const team = '전극기술팀'
 
+  /** 옮겨도 아무것과도 안 부딪히는 짝을 실데이터에서 **찾아서** 쓴다.
+      placed[0] + 첫 빈 칸처럼 고정 위치를 잡으면 편성 규칙이 바뀔 때 조용히 빗나간다. */
+  const cleanMove = (s: EditState) => {
+    const S = s.base.cfg.sessions
+    for (const who of s.placed)
+      for (let day = 0; day < s.base.totalDays; day++)
+        for (let slot = 0; slot < S; slot++) {
+          if (day === who.day && slot === who.slot) continue
+          const clash = s.placed.some(o => o.app.id !== who.app.id && o.day === day && o.slot === slot &&
+            (who.teams.some(t => o.teams.includes(t)) ||
+             who.interviewers.some(i => o.interviewers.includes(i))))
+          if (clash) continue
+          for (let room = 0; room < s.base.cfg.rooms; room++)
+            if (!atSpot(s.placed, { day, slot, room })) return { who, to: { day, slot, room } }
+        }
+    throw new Error('부딪히지 않는 이동을 못 찾음')
+  }
+
   it('빈 칸으로 옮기는 평범한 요청은 알릴 것이 없다', () => {
     const s = initEdit(base)
-    const p = { ...propose(s), fromTeam: team } as Proposal
+    const { who, to } = cleanMove(s)
+    const p = {
+      ...propose(s, {
+        appId: who.app.id, appName: who.app.name,
+        from: { day: who.day, slot: who.slot, room: who.room }, to,
+      }),
+      fromTeam: team,
+    } as Proposal
     const e = effectOf(base, s, p)
     expect(e.alerts).toHaveLength(0)
   })

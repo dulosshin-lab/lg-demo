@@ -6,12 +6,15 @@ import { SchedulePage } from './SchedulePage'
 import { WorkspacePage } from './WorkspacePage'
 import { DemoPage, applySide, storedSide } from './DemoPage'
 import { DEMO_PAGES } from './demoPages'
-import { buildSchedule, readRoster, type LiteRoster, type LiteSchedule } from './data'
-import { initEdit } from './edit'
+import { buildSchedule, readRoster, rescheduleWith, type LiteRoster, type LiteSchedule } from './data'
+import { editReducer, initEdit } from './edit'
 import { ConfirmReupload } from './ConfirmReupload'
 import { judge } from './violations'
 import { exportSchedule } from './exportXlsx'
 import { clearSession, loadSession, saveSession, ulid } from './persist'
+import { confirmDay, confirmedDays, releaseDay, type ConfirmEvent } from './confirm'
+import { SetupPage } from './SetupPage'
+import { DEFAULT_SETUP, lastSetup, rememberSetup, type Setup } from './setup'
 import type { EditState } from './edit'
 import { TeamSchedulePage } from './TeamSchedulePage'
 import {
@@ -123,6 +126,11 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
   const [edit, setEdit] = useState<EditState | null>(null)
   /** 팀이 보낸 수정 제안 큐 */
   const [proposals, setProposals] = useState<readonly Proposal[]>([])
+  /** 일자별 확정·해제 기록 — 통보가 나간 사실이라 편집 이력과 따로 둔다 */
+  const [confirms, setConfirms] = useState<readonly ConfirmEvent[]>([])
+  /* 전형 설정. 편성 전에는 화면에서 고치고, 편성이 끝나면 그 편성이 쓴 설정을 그대로 보여 준다 —
+     화면 값과 편성 결과가 어긋나면 담당자가 무엇으로 돌린 결과인지 알 수 없다. */
+  const [setup, setSetup] = useState<Setup>(() => lastSetup() ?? DEFAULT_SETUP)
   /** 알림에서 「받은 요청」을 열라는 신호 */
   const [inboxSignal, setInboxSignal] = useState(0)
   /** 다시 올리려는 팀 회신 — 조정한 것이 있으면 확인을 받고 진행한다 */
@@ -140,6 +148,8 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
     setSchedule(saved.schedule)
     setEdit(saved.edit)
     setProposals(saved.proposals)
+    setConfirms(saved.confirms)
+    if (saved.schedule?.setup) setSetup(saved.schedule.setup)
     setRestored(true)
   }, [])
 
@@ -165,6 +175,7 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
       setRestored(false)
       setEdit(null)
       setProposals([])
+      setConfirms([])
       const saved = saveSession(next, null, id)
       if (!saved.ok) notify(saved.reason)
     } catch (reason) {
@@ -183,11 +194,13 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
     setBusy(true)
     setError(null)
     try {
-      const next = await buildSchedule(roster, [...files])
+      const next = await buildSchedule(roster, [...files], setup)
+      rememberSetup(setup)
       setSchedule(next)
       setRestored(false)
       setEdit(null)
       setProposals([])
+      setConfirms([])
       const saved = saveSession(roster, next, sessionId ?? undefined)
       if (!saved.ok) notify(saved.reason)
     } catch (reason) {
@@ -203,8 +216,9 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
     edits: edit?.events.length ?? 0,
     decided: proposals.filter(p => p.status !== 'pending').length,
     waiting: proposals.filter(p => p.status === 'pending').length,
+    confirmed: confirmedDays(confirms).size,
   }
-  const hasWork = atRisk.edits > 0 || proposals.length > 0
+  const hasWork = atRisk.edits > 0 || proposals.length > 0 || atRisk.confirmed > 0
 
   const uploadTeams = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files ? Array.from(event.target.files) : []
@@ -221,7 +235,7 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
     if (!files) return
     try {
       if (schedule && edit) {
-        await exportSchedule(schedule.result, edit, judge(schedule.result, edit.placed, edit.acks))
+        await exportSchedule(schedule.result, edit, judge(schedule.result, edit.placed, edit.acks), schedule.setup)
         notify('현재 편성표를 내려받았습니다.')
       }
     } catch (reason) {
@@ -237,6 +251,7 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
     setSchedule(null)
     setEdit(null)
     setProposals([])
+    setConfirms([])
     setSessionId(null)
     setRestored(false)
     setError(null)
@@ -248,17 +263,51 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
   const saveEdit = useCallback((next: EditState) => {
     setEdit(next)
     if (!roster || !schedule) return
-    const out = saveSession(roster, schedule, sessionId ?? undefined, next, proposals)
+    const out = saveSession(roster, schedule, sessionId ?? undefined, next, proposals, confirms)
     if (!out.ok) notify(out.reason)
-  }, [roster, schedule, sessionId, proposals])
+  }, [roster, schedule, sessionId, proposals, confirms])
 
   const saveProposals = useCallback((next: readonly Proposal[], nextEdit?: EditState) => {
     setProposals(next)
     if (nextEdit) setEdit(nextEdit)
     if (!roster || !schedule) return
-    const out = saveSession(roster, schedule, sessionId ?? undefined, nextEdit ?? edit, next)
+    const out = saveSession(roster, schedule, sessionId ?? undefined, nextEdit ?? edit, next, confirms)
     if (!out.ok) notify(out.reason)
-  }, [roster, schedule, sessionId, edit])
+  }, [roster, schedule, sessionId, edit, confirms])
+
+  /* 확정분을 고정한 채 나머지를 다시 편성한다.
+
+     편성표와 편집 상태를 **함께** 갈아 끼우고 한 번에 저장한다. 나눠서 넣으면 새 편성표에
+     옛 편집분이 잠깐 얹히면서, 그 사이에 저장이 돌면 어긋난 한 쌍이 남는다. */
+  const reschedule = useCallback(() => {
+    if (!roster || !schedule) return
+    // 고친 것이 없으면 저장분이 비어 있다(빈 편집은 저장하지 않는다). 기준선에서 시작하면 된다 —
+    // 여기서 그냥 돌아서면 버튼이 아무 일도 안 하고 아무 말도 안 하는 상태가 된다.
+    const from = edit ?? initEdit(schedule.result)
+    try {
+      const report = rescheduleWith(schedule, from, confirms)
+      const nextEdit = editReducer(from, {
+        type: 'reschedule', base: report.schedule.result,
+        pinnedCount: report.pinned, movedCount: report.replaced,
+        actor: { id: 'local', name: USERS.hr.name },
+      })
+      setSchedule(report.schedule)
+      setEdit(nextEdit)
+      const out = saveSession(roster, report.schedule, sessionId ?? undefined, nextEdit, proposals, confirms)
+      if (!out.ok) notify(out.reason)
+      else notify(`${report.pinned}명을 고정하고 ${report.replaced}명을 다시 편성했습니다.`)
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : '다시 편성에 실패했습니다.')
+    }
+  }, [roster, schedule, edit, confirms, proposals, sessionId])
+
+  /** 일자 확정·해제. 통보가 걸린 일이라 Ctrl+Z 로는 풀리지 않는다. */
+  const saveConfirms = useCallback((next: readonly ConfirmEvent[]) => {
+    setConfirms(next)
+    if (!roster || !schedule) return
+    const out = saveSession(roster, schedule, sessionId ?? undefined, edit, proposals, next)
+    if (!out.ok) notify(out.reason)
+  }, [roster, schedule, sessionId, edit, proposals])
 
   /** 팀이 요청을 보낸다 */
   const sendProposal = useCallback((p: Proposal) => {
@@ -436,7 +485,17 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
             </div>
           )}
           {page === 'roster' && <RosterPage roster={roster} busy={busy} onUpload={uploadRoster} onNext={() => setPage('schedule')} />}
-          {page === 'schedule' && <SchedulePage roster={roster} schedule={schedule} busy={busy} onUpload={uploadTeams} onBack={() => setPage('roster')} onEdit={saveEdit} saved={edit} onNotify={notify} proposals={proposals} onApproveProposal={approveProposal} onRejectProposal={rejectProposal} openInbox={inboxSignal} onGoTeam={() => { setRole('lead'); setPage('t-sched') }} onWithdrawProposal={withdrawProposal} />}
+          {page === 'schedule' && <SchedulePage roster={roster} schedule={schedule} busy={busy} onUpload={uploadTeams} onBack={() => setPage('roster')} onEdit={saveEdit} saved={edit} onNotify={notify} proposals={proposals} onApproveProposal={approveProposal} onRejectProposal={rejectProposal} openInbox={inboxSignal} onGoTeam={() => { setRole('lead'); setPage('t-sched') }} onWithdrawProposal={withdrawProposal}
+            confirms={confirms}
+            onConfirmDay={(day, placed) => {
+              saveConfirms(confirmDay(confirms, day, placed, { id: 'local', name: USERS.hr.name }))
+              notify(`${day + 1}일차를 확정했습니다. 이 날짜를 고치면 재통보 대상으로 잡힙니다.`)
+            }}
+            onReleaseDay={day => {
+              saveConfirms(releaseDay(confirms, day, { id: 'local', name: USERS.hr.name }))
+              notify(`${day + 1}일차 확정을 풀었습니다.`)
+            }}
+            onReschedule={reschedule} />}
           {page === 'i-work' && <WorkspacePage onNotify={notify} />}
           {page === 't-sched' && (
             <TeamSchedulePage
@@ -446,7 +505,19 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
               onSeen={markSeen}
             />
           )}
-          {page !== 'roster' && page !== 'schedule' && page !== 'i-work' && page !== 't-sched' && <DemoPage html={DEMO_PAGES[page] ?? ''} onGoto={goto} onNotify={notify} />}
+          {page === 'setup' && (
+            <SetupPage
+              setup={setup}
+              onChange={next => { setSetup(next); rememberSetup(next) }}
+              apps={schedule?.payload.apps ?? []}
+              confirmedDays={confirmedDays(confirms).size}
+              hasSchedule={!!schedule}
+              onNotify={notify}
+              onNext={() => setPage(schedule ? 'schedule' : 'roster')}
+            />
+          )}
+          {page !== 'roster' && page !== 'schedule' && page !== 'i-work' && page !== 't-sched' && page !== 'setup'
+            && <DemoPage html={DEMO_PAGES[page] ?? ''} onGoto={goto} onNotify={notify} />}
         </main>
       </div>
       <ChatBot role={role} page={page} roster={roster} schedule={schedule} />

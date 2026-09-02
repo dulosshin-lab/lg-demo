@@ -7,6 +7,9 @@ import { RosterPage } from './RosterPage'
 import { SchedulePage } from './SchedulePage'
 import { DEMO_PAGES } from './demoPages'
 import type { LiteRoster, LiteSchedule } from './data'
+import { DEFAULT_SETUP } from './setup'
+
+const EMPTY_METRICS = { teamBlocks: 0, ivBlocks: 0, ivSplit: 0, holes: 0 }
 
 const EMPTY_SCHEDULE: LiteSchedule = {
   sourceCount: 1,
@@ -14,6 +17,8 @@ const EMPTY_SCHEDULE: LiteSchedule = {
   result: { cfg: { startDate: '2026-08-17', days: 0, sessions: 1, rooms: 1, startTime: '09:00', sessionMin: 25, breakMin: 5, lunchStart: '12:00', lunchMin: 60, amSessions: 1, separateEdu: true, eduBoundary: 'session', checkInterviewer: true, avoidFirstSlot: 'off', rotateEvery: 0, skipWeekend: true, pinned: null }, roomsPlan: null, times: [{ i: 0, start: 540, end: 565, label: '09:00–09:25', pm: false }], FS: { am: 0, pm: -1 }, grid: {}, placed: [], unplaced: [], demand: {}, teamsAsc: [], minDemand: 0, totalDays: 1, groupDays: [], groups: [], dates: [{ iso: '2026-08-17', wd: '월', label: '8/17(월)' }] },
   validation: { r1: [], r2: [], r3: [], r4: [] },
   hardViolations: 0,
+  tidy: { moves: 0, before: EMPTY_METRICS, after: EMPTY_METRICS, ms: 0 },
+  setup: DEFAULT_SETUP,
 }
 
 const HEADERS = ['지원자 번호', '한글성명', '성별', '최종학력_주전공']

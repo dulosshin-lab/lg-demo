@@ -144,7 +144,7 @@ tr:last-child td { border-bottom: 0; }
 .schedule-table table { min-width: 720px; table-layout: fixed; }
 .schedule-table th:first-child { width: 74px; }
 .schedule-table tbody th { position: static; padding-top: 12px; background: transparent; text-align: right; vertical-align: top; }
-.schedule-table td { height: 58px; padding: 6px 8px; border: 6px solid var(--canvas); border-radius: 7px; background: var(--panel); vertical-align: top; }
+.schedule-table td { height: 58px; padding: 6px 8px; border: 6px solid var(--canvas); border-radius: 12px; background: var(--panel); vertical-align: top; }
 .schedule-table td.joint { box-shadow: inset 0 0 0 2px var(--ink); }
 .schedule-table td b, .schedule-table td span, .schedule-table td small { display: block; }
 .schedule-table td b { font-size: 12px; }
@@ -208,21 +208,32 @@ tr:last-child td { border-bottom: 0; }
 .restored { display: flex; max-width: 960px; margin: 0 auto 16px; padding: 10px 16px; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--soft); color: var(--muted); font-size: 13px; }
 
 /* ── 편성표 편집기 ── */
+/* 격자 객체 전용 테두리 색. var(--line)(#e7e4e2) 은 흰 카드가 흰 바탕 위에 있을 때
+   거의 안 보여서, 한 톤 진한 값을 따로 둔다. */
+:root { --card-line: #d9d3cf; }
 .page.wide { max-width: none; }
 .editor { display: grid; grid-template-columns: minmax(0, 1fr) 232px; gap: 14px; align-items: start; }
 @media (max-width: 1100px) { .editor { grid-template-columns: minmax(0, 1fr); } }
 
 .schedule-table td { padding: 0; vertical-align: top; }
-.cell-card { display: flex; position: relative; flex-direction: column; gap: 1px; min-height: 58px; padding: 8px 10px; border: 1px solid transparent; border-radius: 7px; background: var(--panel); cursor: grab; touch-action: none; }
-.cell-card:hover { border-color: var(--muted); }
+/* 카드에 옅은 테두리를 둘러 칸 안에서 경계가 읽히게 한다. 위반 표식이 있는 카드는
+   아래에서 자기 색으로 덮어쓴다(빨강·회색). 옮길 때 그림자와 크기가 함께 반응한다. */
+.cell-card { display: flex; position: relative; flex-direction: column; gap: 1px; min-height: 58px; padding: 8px 10px; border: 1px solid var(--card-line); border-radius: 12px; background: var(--panel); cursor: grab; touch-action: none; transition: box-shadow .12s ease, border-color .12s ease, transform .12s ease; }
+.cell-card:hover { border-color: var(--muted); box-shadow: 0 1px 4px rgb(35 32 33 / 8%); }
+/* 누르는 순간 살짝 줄어든다. **중심을 기준으로** 줄이므로 사각형의 중심 좌표가 그대로고,
+   dnd-kit 이 대상 칸을 고를 때 쓰는 것도 중심 거리라(closestCenter) 조준이 밀리지 않는다. */
+.cell-card:active { transform: scale(.97); transform-origin: center; cursor: grabbing; }
 .cell-card:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-.cell-card.dragging { opacity: .35; }
+/* 끌고 있는 원본 카드는 **크기를 건드리지 않는다.** dnd-kit 은 이 요소의 사각형으로 대상
+   칸을 고르기 때문에(closestCenter), 여기에 transform 을 걸면 조준이 밀린다.
+   실제로 커서를 따라다니는 것은 아래 .drag-ghost 라, 작아지는 느낌은 거기서 준다. */
+.cell-card.dragging { opacity: .3; border-style: dashed; box-shadow: none; }
 .cell-card b { font-size: 13px; }
 .cell-card span { color: var(--muted); font-size: 11.5px; }
 .cell-card small { color: var(--muted); font-size: 11px; }
 .cell-card.has-alert { border-color: var(--lg); background: #fff1f5; }
 .cell-card.has-new-notice { border-color: var(--muted); background: var(--soft); }
-.cell-card.has-base-notice { border-color: var(--line); background: var(--soft); }
+.cell-card.has-base-notice { border-color: var(--card-line); background: var(--soft); }
 .cell-card .mark { position: absolute; top: 5px; right: 7px; font-size: 10px; line-height: 1; }
 .mark.alert { color: var(--lg); }
 .mark.new-notice { color: var(--ink); }
@@ -232,7 +243,7 @@ tr:last-child td { border-bottom: 0; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 10px; color: var(--muted); font-size: 11.5px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend i { font-size: 9px; font-style: normal; }
-.drag-ghost { box-shadow: 0 6px 20px rgb(0 0 0 / .18); border-color: var(--ink); cursor: grabbing; }
+.drag-ghost { transform: scale(.94); box-shadow: 0 10px 26px rgb(35 32 33 / 22%); border-color: var(--ink); cursor: grabbing; }
 
 /* 커서 옆 라벨 — 교환은 두 사람이 동시에 움직여서 칸 색만으로는 누구 때문인지 못 읽는다.
    포인터 이벤트를 받지 않아야 라벨이 드롭 대상 판정을 가리지 않는다. */
@@ -246,13 +257,35 @@ tr:last-child td { border-bottom: 0; }
 .schedule-table td.warn { background: #fdf7ec; box-shadow: inset 0 0 0 1px #e8d7b4; }
 .schedule-table td.bad  { background: #fdf0f3; box-shadow: inset 0 0 0 1px #eec3ce; }
 .schedule-table td.over { box-shadow: inset 0 0 0 2px var(--ink); }
+/* 놓일 칸의 카드도 반응한다 — 점유 칸이면 교환이라, 밀려날 사람이 자기도 움직인다고 알린다.
+   칸(td)에는 변형을 걸지 않는다: 칸은 droppable 이라 사각형이 흔들리면 조준이 밀린다.
+   카드에만 걸면 배치가 안 바뀌므로 칸의 사각형은 그대로다. */
+.schedule-table td.over .cell-card { transform: scale(.93); border-color: var(--ink); box-shadow: 0 2px 10px rgb(35 32 33 / 14%); }
+
+/* 빈 칸 — 카드와 같은 크기·같은 모서리로 자리를 그린다. 「여기」는 끌고 왔을 때만 뜬다. */
+/* 빈 칸은 평소엔 아무 선도 긋지 않는다 — 칸이 비었다는 건 비어 보이는 것으로 충분하다.
+   선 굵기는 남겨 두고 색만 지운다(none 으로 지우면 끌어왔을 때 테두리가 생기며 2px 씩 밀린다). */
+.cell-empty { display: flex; align-items: center; justify-content: center; min-height: 58px; height: 100%; border: 1px solid transparent; border-radius: 12px; transition: border-color .12s ease, transform .12s ease; }
+.cell-empty span { opacity: 0; color: var(--muted); font-size: 11px; transition: opacity .12s ease; }
+.schedule-table td.over .cell-empty { transform: scale(.93); border-color: var(--ink); }
+.schedule-table td.over .cell-empty span { opacity: 1; }
+.schedule-table td.good.over { box-shadow: inset 0 0 0 2px #7fae87; }
+.schedule-table td.warn.over { box-shadow: inset 0 0 0 2px #c9a34e; }
+.schedule-table td.bad.over  { box-shadow: inset 0 0 0 2px var(--lg); }
+
+/* 손이 느리게 움직이는 사람에게도 어색하지 않게 — 움직임을 줄이는 설정을 존중한다 */
+@media (prefers-reduced-motion: reduce) {
+  .cell-card, .cell-empty, .drag-ghost,
+  .schedule-table td.over .cell-card, .schedule-table td.over .cell-empty,
+  .cell-card:active { transition: none; transform: none; }
+}
 
 .drawer { display: flex; flex-direction: column; gap: 7px; min-height: 180px; max-height: 640px; padding: 12px; overflow-y: auto; border: 1px dashed var(--muted); border-radius: var(--radius); background: var(--soft); }
 .drawer.over { border-color: var(--ink); border-style: solid; background: var(--panel); }
 .drawer-head { color: var(--muted); font-size: 12px; }
 .drawer-head b { color: var(--ink); }
 .drawer-empty { margin: 0; color: var(--muted); font-size: 12px; }
-.drawer-card { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); cursor: grab; touch-action: none; }
+.drawer-card { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border: 1px solid var(--card-line); border-radius: 12px; background: var(--panel); cursor: grab; touch-action: none; }
 .drawer-card.dragging { opacity: .35; }
 .drawer-card b { font-size: 13px; }
 .drawer-card span, .drawer-card small { color: var(--muted); font-size: 11px; }
@@ -417,3 +450,133 @@ tr.picked { background: var(--soft); }
 .prop-effect { margin-top: 8px; padding: 8px 12px; border-left: 3px solid var(--lg); border-radius: 0 7px 7px 0; background: #fff1f5; font-size: 12px; line-height: 1.6; }
 .prop-effect-head { color: var(--lg); font-weight: 700; }
 .prop-effect ul { margin: 3px 0 0; padding-left: 15px; color: var(--lg); }
+
+/* ── 단계적 확정과 재통보 ──
+   확정은 「이미 바깥으로 나간 통보」다. 위반 표식(▲●)과 축이 달라서 같은 기호를 쓰지 않고,
+   카드 왼쪽 띠와 배지로 가른다 — 한 카드에 위반 표식과 확정 상태가 동시에 붙을 수 있다. */
+.cell-card.confirmed { border-left: 3px solid var(--muted); }
+.cell-card.renotify { border-left: 3px solid var(--lg); background: #fff7f9; }
+.cell-card .tag { position: absolute; top: 5px; left: 7px; padding: 1px 4px; border-radius: 3px; font-size: 9px; line-height: 1.5; }
+.cell-card .tag.renotify { background: var(--lg); color: #fff; }
+.cell-card.renotify b, .cell-card.confirmed b { margin-top: 12px; }
+
+.day-tabs button.is-confirmed { border-color: var(--muted); }
+.day-tabs .tag.confirmed { margin-left: 5px; padding: 1px 4px; border-radius: 3px; background: var(--soft); color: var(--muted); font-size: 9.5px; font-style: normal; }
+.day-tabs button[aria-pressed="true"] .tag.confirmed { background: rgb(255 255 255 / .22); color: inherit; }
+.day-row { display: flex; align-items: flex-start; gap: 10px; }
+.day-row .day-tabs { flex: 1 1 auto; min-width: 0; }
+.day-row > .button { flex: none; }
+.confirm-note { margin: -4px 0 10px; color: var(--muted); font-size: 11.5px; }
+
+/* ── 지원자 상세 ── */
+.cell-card .card-more { position: absolute; right: 6px; bottom: 5px; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--muted); font-size: 9.5px; line-height: 1.6; opacity: 0; cursor: pointer; transition: opacity .12s; }
+.cell-card:hover .card-more, .cell-card:focus-within .card-more, .card-more:focus-visible { opacity: 1; }
+.card-more:hover { border-color: var(--muted); color: var(--ink); }
+
+.p-pair { display: inline-flex; align-items: stretch; }
+.p-name { padding: 2px 7px; border: 1px solid var(--line); border-left: 0; border-radius: 0 5px 5px 0; background: var(--panel); color: var(--ink); font-size: 11px; cursor: pointer; }
+.p-name:hover { border-color: var(--muted); background: var(--soft); }
+td .p-name { border: 0; padding: 0; background: none; text-decoration: underline dotted; text-underline-offset: 2px; }
+
+.modal.applicant { width: min(860px, 94vw); max-width: none; max-height: 88vh; display: flex; flex-direction: column; }
+.applicant-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.applicant-head h2 { margin: 0; }
+.applicant-sub { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.applicant-actions { display: flex; flex: none; gap: 6px; }
+.applicant-body { overflow-y: auto; margin: 12px 0 4px; }
+.applicant-body section { margin-bottom: 14px; }
+.applicant-body h3 { margin: 0 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11.5px; font-weight: 700; letter-spacing: .02em; }
+.applicant-body dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 18px; margin: 0; }
+.applicant-body dl > div { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px dotted var(--line); }
+.applicant-body dt { flex: none; width: 108px; color: var(--muted); font-size: 11.5px; }
+.applicant-body dd { margin: 0; font-size: 12.5px; word-break: break-word; }
+.applicant-iv { margin: 0; font-size: 12.5px; }
+.applicant-body .fold summary { cursor: pointer; color: var(--muted); font-size: 11.5px; }
+.applicant-body .fold .badge { margin-left: 4px; padding: 0 5px; border-radius: 99px; background: var(--soft); font-size: 10px; }
+.applicant-body .fold dl { margin-top: 8px; }
+
+/* 이력서 원본 — 브라우저 내장 PDF 뷰어에 맡긴다 */
+.applicant-pdf { display: flex; flex: 1; flex-direction: column; min-height: 0; margin: 12px 0 4px; }
+.applicant-pdf iframe { flex: 1; width: 100%; min-height: 62vh; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); }
+
+/* 인쇄 — 창만 남기고 다 숨긴다. 브라우저 인쇄로 그대로 PDF 가 된다(라이브러리 없음). */
+@media print {
+  body * { visibility: hidden; }
+  .applicant-back, .applicant-back * { visibility: visible; }
+  .applicant-back { position: absolute; inset: 0; display: block; padding: 0; background: none; }
+  .modal.applicant { width: 100%; max-height: none; box-shadow: none; border: 0; }
+  .applicant-actions, .modal-note { display: none; }
+  .applicant-body { overflow: visible; }
+  .applicant-body .fold { display: none; }
+}
+
+/* ── 전형 설정 ──
+   칸마다 힌트가 있고 없고가 갈려서, 그냥 늘어놓으면 입력칸 줄이 들쭉날쭉해진다.
+   그래서 모든 칸을 **라벨 / 입력 / 힌트 세 줄짜리 격자**로 고정한다 — 힌트가 없는 칸도
+   자리만 비워 두면 입력칸이 같은 높이에 선다. 체크박스도 같은 줄에 맞춰 내린다. */
+.s-panel { margin-bottom: 12px; }
+.s-head { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 13px; }
+.s-head i { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: var(--ink); color: #fff; font-size: 11px; font-style: normal; font-weight: 700; }
+
+.s-row { display: flex; flex-wrap: wrap; align-items: start; gap: 6px 18px; margin-bottom: 6px; }
+.s-row:last-of-type { margin-bottom: 0; }
+
+.s-field { display: grid; grid-template-rows: 16px 32px 15px; align-content: start; row-gap: 4px; }
+.s-field.wide { flex: 1 1 320px; }
+.s-field > span:first-child { align-self: end; color: var(--muted); font-size: 11.5px; line-height: 16px; }
+.s-field > small { color: var(--muted); font-size: 10.5px; line-height: 15px; white-space: nowrap; }
+.s-field.locked > span:first-child, .s-field.locked > small { opacity: .55; }
+
+.s-input { display: inline-flex; align-items: center; gap: 5px; height: 32px; }
+.s-input input, .s-input select { height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); font: inherit; font-size: 12.5px; box-sizing: border-box; }
+.s-field.wide .s-input, .s-field.wide input { width: 100%; }
+.s-field.wide > small { display: none; }
+/* 설명이 긴 칸 — 힌트는 마지막 줄이라 늘어나도 입력칸 정렬을 흔들지 않는다 */
+.s-field.s-wide-hint { grid-template-rows: 16px 32px auto; max-width: 300px; }
+.s-field.s-wide-hint > small { white-space: normal; line-height: 1.45; }
+.s-field.s-wide-hint select { min-width: 240px; }
+.s-field.wide { grid-template-rows: 16px 32px; }
+.s-input input[type="number"] { width: 74px; }
+.s-input input[type="date"] { width: 162px; }
+.s-input input[type="time"] { width: 116px; }
+.s-input select { min-width: 132px; padding-right: 4px; }
+.s-input input:disabled, .s-input select:disabled { background: var(--soft); color: var(--muted); cursor: not-allowed; }
+.s-input i { color: var(--muted); font-size: 11.5px; font-style: normal; }
+
+/* 체크박스도 입력칸 줄에 세운다 — 라벨 높이(16px)+간격(4px)만큼 내린다 */
+.s-toggle { display: grid; grid-template-columns: auto 1fr; align-items: start; column-gap: 7px; margin-top: 20px; min-height: 32px; cursor: pointer; }
+.s-toggle input { margin: 4px 0 0; }
+.s-toggle-text { display: flex; flex-direction: column; gap: 1px; }
+.s-toggle-text b { font-size: 12.5px; font-weight: 500; line-height: 18px; }
+.s-toggle-text small { color: var(--muted); font-size: 10.5px; line-height: 14px; }
+
+.s-add { align-self: start; margin-top: 20px; height: 32px; }
+/* 줄 안의 설명 문구는 입력칸과 같은 줄에 선다 — 그냥 두면 라벨보다 위로 붙는다 */
+.s-row > .s-empty { margin-top: 20px; line-height: 32px; }
+.s-presets > .s-empty { margin-top: 0; line-height: 1.5; }
+/* 체크박스만 있는 줄은 위에 라벨이 없으니 그만큼 당긴다 */
+.s-only-toggles { margin-top: 4px; }
+.s-only-toggles .s-toggle { margin-top: 0; }
+.s-presets { align-items: center; gap: 8px; margin-bottom: 12px; }
+.s-presets .button { padding: 5px 14px; }
+.s-empty { color: var(--muted); font-size: 11.5px; }
+.s-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 20px; min-height: 32px; }
+.s-chip { padding: 4px 9px; border: 1px solid var(--line); border-radius: 99px; background: var(--soft); color: var(--ink); font-size: 11.5px; cursor: pointer; }
+.s-chip:hover { border-color: var(--lg); color: var(--lg); }
+
+.s-preview { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 14px; padding: 10px 13px; border-radius: 9px; background: var(--soft); font-size: 12px; }
+.s-preview b { font-size: 12.5px; }
+.s-preview span { color: var(--muted); }
+.s-note { margin: 10px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+.s-lock { margin-bottom: 12px; border-left: 3px solid var(--lg); background: #fff7f9; font-size: 12.5px; line-height: 1.7; }
+.s-warn { margin-bottom: 12px; border-left: 3px solid var(--muted); font-size: 12.5px; }
+.s-warn ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.7; }
+.s-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* 접기 요약 — 배지가 글자에 붙지 않게 */
+.s-panel > summary { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.s-panel > summary .badge { padding: 1px 7px; border-radius: 99px; background: var(--soft); color: var(--muted); font-size: 10.5px; font-weight: 500; }
+.s-panel .fold-body { margin-top: 10px; }
+.s-panel .fold-body .s-row { gap: 6px 14px; }
+.s-panel .fold-body .s-field { flex: 1 1 180px; }
+.s-panel .fold-body .s-input input { width: 100%; }

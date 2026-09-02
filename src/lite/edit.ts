@@ -11,7 +11,7 @@
 import type { Applicant, Placed, Result } from '@/core/schedule'
 import { nowISO, ulid } from './persist'
 
-export type EditOp = 'move' | 'swap' | 'remove' | 'place' | 'ack' | 'unack'
+export type EditOp = 'move' | 'swap' | 'remove' | 'place' | 'ack' | 'unack' | 'reschedule'
 
 /** 격자 한 칸 */
 export type Spot = { readonly day: number; readonly slot: number; readonly room: number }
@@ -40,6 +40,9 @@ export type EditEvent = {
       되돌릴 때 요청 상태도 함께 되돌리려면 이 연결이 있어야 한다 —
       없으면 표는 원복되는데 팀에게는 「승인됨」이 남아 어긋난다. */
   readonly proposalId?: string
+  /** reschedule 일 때 — 몇 명을 고정하고 몇 명을 다시 배치했나 */
+  readonly pinnedCount?: number
+  readonly movedCount?: number
 }
 
 /** 편집 중인 편성표. base 는 1차 자동 편성 결과로, 절대 바뀌지 않는다. */
@@ -82,6 +85,9 @@ export type EditAction =
   | { type: 'undo' }
   | { type: 'reset'; base: Result }
   | { type: 'load'; state: EditState }
+  /** 확정분을 고정한 채 나머지를 다시 편성했다. 기준선 자체가 바뀌므로 배치는 새 base 를 쓰고,
+      이력은 이어 붙인다 — 재편성 때문에 「누가 언제 무엇을」 기록이 끊기면 안 된다. */
+  | { type: 'reschedule'; base: Result; pinnedCount: number; movedCount: number; actor?: Actor }
 
 const spotOf = (p: Placed): Spot => ({ day: p.day, slot: p.slot, room: p.room })
 const moveTo = (p: Placed, s: Spot): Placed => ({ ...p, day: s.day, slot: s.slot, room: s.room })
@@ -227,7 +233,20 @@ export function editReducer(state: EditState, action: EditAction): EditState {
 
     case 'undo': {
       const last = state.events[state.events.length - 1]
-      return last ? undoOne(state, last) : state
+      if (!last) return state
+      // 다시 편성은 되돌릴 수 없다 — 되감을 「이전 자리」가 사람마다 다르고, 기준선까지 바뀌었다
+      if (last.op === 'reschedule') return state
+      return undoOne(state, last)
+    }
+
+    case 'reschedule': {
+      const next = initEdit(action.base)
+      return {
+        ...next,
+        acks: state.acks,                     // 같은 위반이 남아 있으면 확인 표시도 유효하다
+        events: [...state.events, nextEvent(state, actor, 'reschedule', { id: 0, name: '' }, null, null,
+          { pinnedCount: action.pinnedCount, movedCount: action.movedCount })],
+      }
     }
 
     case 'reset':
@@ -251,11 +270,39 @@ export function eventText(e: EditEvent): string {
     case 'place': return `${e.appName} 배정 — ${e.to ? spotText(e.to) : ''}`
     case 'ack':   return `예외로 표시${e.reason ? ` — ${e.reason}` : ''}`
     case 'unack': return '예외 표시 해제'
+    case 'reschedule':
+      return `확정분 ${e.pinnedCount ?? 0}명을 고정하고 나머지 ${e.movedCount ?? 0}명을 다시 편성`
   }
 }
 
 /** 시각에서 시:분만 — 이력 목록이 길어져도 읽기 쉽게 */
 export const hhmm = (ts: string) => ts.slice(11, 16)
+
+/** 담당자가 미배정으로 뺀 사람 — 다시 편성해도 자리를 만들지 않는다 */
+export function removedIds(events: readonly EditEvent[]): Set<number> {
+  const ids = new Set<number>()
+  for (const e of events) {
+    if (e.op === 'remove') ids.add(e.appId)
+    if (e.op === 'place') ids.delete(e.appId)
+  }
+  return ids
+}
+
+/** 담당자가 손으로 자리를 정해 준 사람 — 다시 편성할 때 그 자리를 지킨다.
+    재편성마다 손질이 날아가면 「고쳐도 전체가 안 깨지게」가 성립하지 않는다. */
+export function touchedIds(events: readonly EditEvent[]): Set<number> {
+  const ids = new Set<number>()
+  for (const e of events) {
+    if (e.op === 'move' || e.op === 'place') ids.add(e.appId)
+    if (e.op === 'swap') {
+      ids.add(e.appId)
+      if (e.peerAppId !== undefined) ids.add(e.peerAppId)
+    }
+    if (e.op === 'remove') ids.delete(e.appId)
+    if (e.op === 'reschedule') ids.clear()      // 이미 편성에 녹아든 손질이다
+  }
+  return ids
+}
 
 /** 편집이 있었나 — 저장·내보내기 버튼을 켤지 정한다 */
 export const isDirty = (s: EditState) => s.events.length > 0

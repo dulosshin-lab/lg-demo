@@ -2,6 +2,7 @@
    면접 일정 자동 편성 엔진
    우선순위: 1) 학력 요일 분리  2) 팀 시간대 중복 금지
              3) 동일 팀 연속 배치  4) 첫 타임 수요 적은 조부터
+             5) 병목 팀(하루 세션 수 초과) 선배치 — 2026-09-02 추가
    =========================================================== */
 (function (root) {
   const EDU_ORDER = ['학사', '석사', '박사'];
@@ -250,7 +251,15 @@
       const byTeam = {};
       g.list.forEach(a => { if (pinnedIds.has(a.id)) return;
         const t = a.teams[0]; (byTeam[t] = byTeam[t] || []).push(a); });
-      const order = Object.keys(byTeam).sort((a, b) => demand[a] - demand[b] || a.localeCompare(b));
+      /* ⑤ 병목 팀 선배치 — 이 학력 그룹에서 하루 세션 수를 넘는 팀을 먼저 앉힌다.
+         ④ 때문에 수요 오름차순으로만 넣으면 작은 팀들이 첫날을 채우고, 정작 하루에 다 못
+         들어가는 팀이 맨 마지막에 남은 자리만 받는다. 그 팀이 넘긴 인원이 다음 날로 밀리는데
+         규칙 ②(한 팀은 한 세션에 한 명) 탓에 남은 팀 수만큼만 열이 차서 격자가 반쪽으로 빈다.
+         실측(60명·8세션·4조): 2일차 15/32석, 1조 열이 통째로 공석.
+         병목 팀만 앞으로 보내고 나머지 순서는 그대로라 ④ 훼손이 가장 작다. */
+      const bottleneck = t => (byTeam[t].length > S ? 0 : 1);
+      const order = Object.keys(byTeam).sort((a, b) =>
+        bottleneck(a) - bottleneck(b) || demand[a] - demand[b] || a.localeCompare(b));
 
       order.forEach((t, oi) => {
         const home = oi % Rg;  // 조 배정은 그룹(학력 블록) 안의 순서 기준

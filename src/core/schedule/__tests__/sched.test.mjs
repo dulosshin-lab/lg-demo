@@ -106,6 +106,35 @@ test('실제로 minDays 밑으로는 편성되지 않는다', () => {
   assert.ok(r.totalDays >= md, `${r.totalDays} < ${md}`)
 })
 
+// ---------- ⑤ 병목 팀 선배치 ----------
+test('하루에 다 못 들어가는 팀을 먼저 앉힌다', () => {
+  /* A 는 6건인데 하루가 4세션이라 하루에 다 못 들어간다(규칙 ② 로 한 세션에 한 명뿐).
+     ④(수요 적은 팀부터)만 따르면 A 가 맨 뒤로 밀리고, 그사이 B·C·D 가 앞 세션들을
+     **조 수만큼 가득** 채워 버려서 A 는 1일차에 한 자리밖에 못 받는다.
+
+     팀 수가 조 수보다 많아야 재현된다 — 팀 ≤ 조 이면 각 팀이 제 조를 하나씩 차지해
+     세션이 가득 차지 않으므로, 고치기 전에도 A 가 상한을 채운다. 이 조합은 고치기 전
+     A 1일차 = 1, 고친 뒤 = 4 로 갈린다(일수도 3 → 2). */
+  const apps = synth([['학사', 'A', 6], ['학사', 'B', 3], ['학사', 'C', 3], ['학사', 'D', 3]])
+  const r = S.schedule(apps, { sessions: 4, amSessions: 2, rooms: 3, days: 0 })
+  const day1 = r.placed.filter(p => p.team === 'A' && p.day === 0).length
+  assert.equal(day1, 4, `A 의 1일차 배치가 ${day1} — 하루 상한 4 를 채워야 한다`)
+  assert.equal(r.totalDays, 2, `${r.totalDays}일 — 병목 팀을 굶기면 3일로 늘어난다`)
+  assert.equal(r.unplaced.length, 0)
+  const v = S.validate(r)
+  assert.equal(v.r1.length, 0)
+  assert.equal(v.r2.length, 0)
+})
+
+test('병목이 없으면 수요 오름차순 그대로다', () => {
+  // 어느 팀도 하루 세션 수를 넘지 않으면 ④ 순서가 그대로 살아 있어야 한다
+  const apps = synth([['학사', 'A', 6], ['학사', 'B', 3], ['학사', 'C', 2]])
+  const r = S.schedule(apps, { sessions: 8, amSessions: 4, rooms: 3, days: 0 })
+  const firstOf = t => Math.min(...r.placed.filter(p => p.team === t).map(p => p.day * 8 + p.slot))
+  assert.ok(firstOf('C') <= firstOf('B'), '수요가 가장 적은 팀이 먼저 들어간다')
+  assert.equal(S.validate(r).r2.length, 0)
+})
+
 // ---------- blocksOf ----------
 test('연속 슬롯은 한 블록, 끊기면 나뉜다', () => {
   const mk = (day, room, team, slot) => ({ day, room, team, slot, app: { id: slot } })

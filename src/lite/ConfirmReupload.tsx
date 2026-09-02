@@ -10,7 +10,11 @@ import { useEffect, useRef } from 'react'
 
 type Props = {
   readonly files: number
-  readonly atRisk: { readonly edits: number; readonly decided: number; readonly waiting: number }
+  readonly atRisk: {
+    readonly edits: number; readonly decided: number; readonly waiting: number
+    /** 확정해서 이미 통보가 나간 일자 수 — 되돌릴 수 없는 쪽이라 맨 위에 둔다 */
+    readonly confirmed: number
+  }
   readonly canExport: boolean
   readonly onExport: () => void
   readonly onProceed: () => void
@@ -38,6 +42,9 @@ export function ConfirmReupload({ files, atRisk, canExport, onExport, onProceed,
             회신 {files}개로 1차 편성을 새로 만듭니다. 그 위에 쌓은 것은 되살릴 수 없습니다.
           </p>
           <ul className="modal-risk">
+            {atRisk.confirmed > 0 && (
+              <li><b>확정한 {atRisk.confirmed}일</b> — 이미 통보한 내용입니다. 새 편성은 이 자리를 지키지 않습니다</li>
+            )}
             {atRisk.edits > 0 && <li><b>수기 편집 {atRisk.edits}건</b> — 옮기고 바꾸고 뺀 기록</li>}
             {proposals > 0 && (
               <li>

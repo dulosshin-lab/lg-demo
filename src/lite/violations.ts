@@ -163,7 +163,11 @@ function rawFindings(base: Result, placed: readonly Placed[]): Finding[] {
     })
   }
 
-  return findings
+  /* 엔진의 ②④ 는 **사람 단위**로 나오는데 키는 (날짜·세션·팀) 단위다. 한 팀이 같은 세션에
+     두 명 있으면(편집으로 그런 상태를 만들 수 있다) 같은 키의 finding 이 둘 생겨서, 목록의
+     React key 가 겹치고 ack 도 어느 쪽에 걸린 건지 알 수 없게 된다. 문장이 같으니 하나만 남긴다. */
+  const seen = new Set<string>()
+  return findings.filter(f => (seen.has(f.key) ? false : (seen.add(f.key), true)))
 }
 
 /* ---------- 드래그 예고 ---------- */

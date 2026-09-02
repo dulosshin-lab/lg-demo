@@ -4,13 +4,19 @@ import {
   closestCenter, useDraggable, useDroppable, useSensor, useSensors,
   type DragEndEvent, type DragOverEvent, type DragStartEvent,
 } from '@dnd-kit/core'
-import type { Applicant, Placed } from '@/core/schedule'
+import type { Applicant, Placed, Result } from '@/core/schedule'
 import type { LiteRoster, LiteSchedule } from './data'
 import {
-  DEFAULT_ACTOR, editReducer, eventText, gridOf, hhmm, initEdit, isDirty,
+  DEFAULT_ACTOR, editReducer, eventText, gridOf, hhmm, initEdit, isDirty, removedIds, touchedIds,
   type EditState, type Spot,
 } from './edit'
 import { baseSpans, judge, previewSpot, RULE_LABEL, type Finding, type SpotVerdict } from './violations'
+import {
+  confirmedDays, noticeSpots, pinsOf, renotifyOf, renotifyText,
+  type ConfirmEvent, type Renotify,
+} from './confirm'
+import { ApplicantModal } from './ApplicantModal'
+import { ConfirmReschedule } from './ConfirmReschedule'
 import { applyProposal } from './proposals'
 import { exportChangesCsv, exportCsv, exportSchedule } from './exportXlsx'
 import { exportImage } from './exportImage'
@@ -38,6 +44,12 @@ type SchedulePageProps = {
   readonly onGoTeam?: () => void
   /** 승인으로 생긴 편집을 되돌렸다 — 요청도 대기 중으로 되돌려야 한다 */
   readonly onWithdrawProposal?: (proposalId: string) => void
+  /** 일자별 확정·해제 기록 */
+  readonly confirms?: readonly ConfirmEvent[]
+  readonly onConfirmDay?: (day: number, placed: readonly Placed[]) => void
+  readonly onReleaseDay?: (day: number) => void
+  /** 확정분을 고정한 채 나머지를 다시 편성한다 — 실제 계산과 저장은 앱 껍데기가 맡는다 */
+  readonly onReschedule?: () => void
 }
 
 /* ── 끌 수 있는 지원자 카드 ── */
@@ -89,11 +101,16 @@ function TipBubble({ tip }: { readonly tip: Tip }) {
 }
 
 function DraggableCard({
-  p, marks, onTip,
+  p, marks, onTip, confirmed, renotify, onOpen,
 }: {
   readonly p: Placed
   readonly marks: readonly Finding[]
   readonly onTip: (tip: Tip | null) => void
+  /** 이 사람은 이미 통보된 사람인가 */
+  readonly confirmed?: boolean
+  /** 통보한 자리에서 벗어났나 — 다시 알려야 한다 */
+  readonly renotify?: boolean
+  readonly onOpen?: (p: Placed) => void
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `app-${p.app.id}` })
   const kind = markOf(marks)
@@ -111,13 +128,28 @@ function DraggableCard({
   return (
     <div
       ref={setNodeRef}
-      className={`cell-card${isDragging ? ' dragging' : ''}${kind ? ` has-${kind}` : ''}`}
+      className={`cell-card${isDragging ? ' dragging' : ''}${kind ? ` has-${kind}` : ''}`
+        + (renotify ? ' renotify' : confirmed ? ' confirmed' : '')}
       {...listeners}
       {...attributes}
       onFocus={e => show(e.currentTarget.querySelector('.mark'))}
       onBlur={hide}
-      aria-label={`${p.app.name} ${p.edu} ${p.teams.join(', ')} — ${p.day + 1}일차 ${p.slot + 1}세션 ${p.room + 1}조${detail ? `. ${detail}` : ''}`}
+      aria-label={`${p.app.name} ${p.edu} ${p.teams.join(', ')} — ${p.day + 1}일차 ${p.slot + 1}세션 ${p.room + 1}조`
+        + (renotify ? '. 통보한 자리에서 벗어났습니다 — 재통보 대상' : confirmed ? '. 확정·통보된 자리' : '')
+        + (detail ? `. ${detail}` : '')}
     >
+      {renotify && <span className="tag renotify">재통보</span>}
+      {onOpen && (
+        /* 끌기와 겹치지 않게 pointerdown 을 여기서 끊는다. 드래그 활성화 거리가 4px 라
+           가만히 누른 클릭은 드래그로 잡히지 않지만, 눌린 채 손이 흔들리면 카드가 딸려 간다. */
+        <button
+          type="button" className="card-more" title={`${p.app.name} 상세`}
+          aria-label={`${p.app.name} 지원자 상세 보기`}
+          onPointerDown={e => e.stopPropagation()}
+          onKeyDown={e => e.stopPropagation()}
+          onClick={e => { e.stopPropagation(); onOpen(p) }}
+        >상세</button>
+      )}
       {kind && (
         <span
           className={`mark ${kind}`}
@@ -171,13 +203,16 @@ function Legend({ onTip }: { readonly onTip: (tip: Tip | null) => void }) {
 
 /* ── 놓을 수 있는 칸 ── */
 function Cell({
-  spot, occupant, verdict, marks, onTip,
+  spot, occupant, verdict, marks, onTip, confirmed, renotify, onOpen,
 }: {
   readonly spot: Spot
   readonly occupant?: Placed
   readonly verdict?: SpotVerdict
   readonly marks: readonly Finding[]
   readonly onTip: (tip: Tip | null) => void
+  readonly confirmed?: boolean
+  readonly renotify?: boolean
+  readonly onOpen?: (p: Placed) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `spot-${spot.day}-${spot.slot}-${spot.room}` })
   // 교환이면 상대 쪽 중복도 빨강이다 — 내 쪽만 깨끗하다고 초록으로 두면 거짓 안심이 된다
@@ -189,7 +224,11 @@ function Cell({
       className={`${joint ? 'joint' : ''}${tone}${isOver ? ' over' : ''}`}
       data-spot={`${spot.day}|${spot.slot}|${spot.room}`}
     >
-      {occupant ? <DraggableCard p={occupant} marks={marks} onTip={onTip} /> : null}
+      {occupant
+        ? <DraggableCard p={occupant} marks={marks} onTip={onTip} confirmed={confirmed} renotify={renotify} onOpen={onOpen} />
+        /* 빈 칸도 자리를 그린다 — 테두리가 없으면 「놓을 수 있는 곳」인지 안 보이고,
+           끌고 오는 동안에도 목표가 어디인지 눈으로 못 짚는다 */
+        : <div className="cell-empty" aria-hidden="true"><span>여기</span></div>}
     </td>
   )
 }
@@ -235,11 +274,12 @@ function DrawerCard({ app, byUser }: { readonly app: Applicant; readonly byUser:
 }
 
 export function SchedulePage({
-  roster, schedule, busy, onUpload, onBack, onEdit, saved, onNotify,
+  roster, schedule, busy, onUpload, onBack, onEdit, saved, onNotify, confirms = [],
+  onConfirmDay, onReleaseDay, onReschedule,
   proposals = [], onApproveProposal, onRejectProposal, openInbox = 0, onGoTeam, onWithdrawProposal,
 }: SchedulePageProps) {
   const [day, setDay] = useState(0)
-  const [panel, setPanel] = useState<'none' | 'violations' | 'history' | 'people'>('none')
+  const [panel, setPanel] = useState<'none' | 'violations' | 'history' | 'people' | 'renotify'>('none')
   /** 오른쪽 서랍(받은 요청) 열림 여부 */
   const [inbox, setInbox] = useState(false)
   const [dragging, setDragging] = useState<number | null>(null)
@@ -247,6 +287,10 @@ export function SchedulePage({
   const [overKey, setOverKey] = useState<string | null>(null)
   const [undoHint, setUndoHint] = useState<{ readonly text: string; readonly seq: number } | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
+  /** 다시 편성 확인 창 */
+  const [askReschedule, setAskReschedule] = useState(false)
+  /** 지원자 상세 창 — 열려 있는 지원자 */
+  const [detail, setDetail] = useState<Placed | null>(null)
   const [tip, setTip] = useState<Tip | null>(null)
   const seqRef = useRef(0)
 
@@ -343,6 +387,21 @@ export function SchedulePage({
   const grid = useMemo(() => gridOf(state.placed), [state.placed])
   const verdict = useMemo(() => base ? judge(base, state.placed, state.acks) : null, [base, state.placed, state.acks])
   const spans = useMemo(() => base ? baseSpans(base) : {}, [base])
+  /* 확정된 날짜와, 통보한 자리에서 벗어난 사람들.
+     확정 뒤에도 이동은 막지 않는다(D1) — 대신 「누구에게 다시 알려야 하나」를 집어낸다. */
+  const confirmedSet = useMemo(() => confirmedDays(confirms), [confirms])
+  const notices = useMemo(() => noticeSpots(confirms), [confirms])
+  const renotify = useMemo(() => renotifyOf(state.placed, confirms), [state.placed, confirms])
+  const renotifyIds = useMemo(() => new Set(renotify.map(r => r.appId)), [renotify])
+
+  const pinPreview = useMemo(() => {
+    const confirmed = new Set(pinsOf(state.placed, confirms).map(p => p.id))
+    const touched = new Set<number>()
+    for (const id of touchedIds(state.events))
+      if (!confirmed.has(id) && state.placed.some(p => p.app.id === id)) touched.add(id)
+    return { confirmed: confirmed.size, touched: touched.size }
+  }, [state.placed, state.events, confirms])
+
   const marksBySpot = useMemo(() => {
     const m = new Map<string, Finding[]>()
     if (!verdict) return m
@@ -362,14 +421,7 @@ export function SchedulePage({
   }, [verdict, state.placed])
 
   // 담당자가 뺀 사람과 엔진이 못 넣은 사람을 가른다
-  const removedByUser = useMemo(() => {
-    const ids = new Set<number>()
-    for (const e of state.events) {
-      if (e.op === 'remove') ids.add(e.appId)
-      if (e.op === 'place') ids.delete(e.appId)
-    }
-    return ids
-  }, [state.events])
+  const removedByUser = useMemo(() => removedIds(state.events), [state.events])
 
   const dragged = dragging === null ? null
     : state.placed.find(p => p.app.id === dragging) ?? state.unplaced.find(a => a.id === dragging) ?? null
@@ -476,6 +528,8 @@ export function SchedulePage({
 
   const dirty = isDirty(state)
   const pendingCount = proposals.filter(p => p.status === 'pending').length
+  /** 아직 확정하지 않은 날짜 — 다시 편성이 손대는 범위다 */
+  const openDays = base.dates.map((_, i) => i).filter(d => !confirmedSet.has(d))
 
   return (
     <section className="page wide" aria-labelledby="schedule-title">
@@ -501,6 +555,12 @@ export function SchedulePage({
         <button className="chip button-chip" type="button" onClick={() => setPanel(p => p === 'history' ? 'none' : 'history')}>
           변경 <b>{state.events.length}건</b>
         </button>
+        {confirmedSet.size > 0 && (
+          <button className={`chip button-chip${renotify.length ? ' danger' : ''}`} type="button"
+            onClick={() => setPanel(p => p === 'renotify' ? 'none' : 'renotify')}>
+            재통보 <b>{renotify.length}명</b>
+          </button>
+        )}
         <button className="chip button-chip" type="button" onClick={() => setPanel(p => p === 'people' ? 'none' : 'people')}>
           면접관 일정
         </button>
@@ -522,13 +582,13 @@ export function SchedulePage({
                 전 일자 편성표 (PNG)<small>{base.totalDays}일치를 한 장에</small>
               </button>
               <div className="export-group">표</div>
-              <button type="button" role="menuitem" onClick={() => run(() => exportCsv(base, state))}>
+              <button type="button" role="menuitem" onClick={() => run(() => exportCsv(base, state, schedule.setup))}>
                 편성표 (CSV)<small>메일·다른 도구에 붙이기</small>
               </button>
-              <button type="button" role="menuitem" onClick={() => run(() => exportChangesCsv(base, state))}>
+              <button type="button" role="menuitem" onClick={() => run(() => exportChangesCsv(base, state, schedule.setup))}>
                 변경 요약 (CSV)<small>{state.events.length}건</small>
               </button>
-              <button type="button" role="menuitem" onClick={() => run(() => exportSchedule(base, state, verdict!))}>
+              <button type="button" role="menuitem" onClick={() => run(() => exportSchedule(base, state, verdict!, schedule.setup))}>
                 전체 (XLSX)<small>편성표 · 변경 요약 · 확인 목록</small>
               </button>
             </div>
@@ -539,7 +599,25 @@ export function SchedulePage({
       {panel === 'violations' && <ViolationPanel verdict={verdict!} acks={state.acks} onGo={goTo}
         onAck={key => dispatch({ type: 'ack', key })} onUnack={key => dispatch({ type: 'unack', key })} />}
       {panel === 'history' && <HistoryPanel state={state} />}
-      {panel === 'people' && <PeoplePanel base={base} placed={state.placed} onGo={setDay} />}
+      {panel === 'people' && <PeoplePanel base={base} placed={state.placed} onGo={setDay} onOpen={setDetail} />}
+      {panel === 'renotify' && <RenotifyPanel base={base} list={renotify} onGo={goTo} />}
+      {detail && (
+        <ApplicantModal
+          p={detail} role="hr" onClose={() => setDetail(null)}
+          placementText={`${detail.day + 1}일차 ${base.times[detail.slot]?.label ?? `${detail.slot + 1}세션`} ${detail.room + 1}조`}
+        />
+      )}
+      {askReschedule && (
+        <ConfirmReschedule
+          openDays={openDays}
+          confirmedDays={confirmedSet.size}
+          confirmedPeople={pinPreview.confirmed}
+          touched={pinPreview.touched}
+          replaced={state.placed.length - pinPreview.confirmed - pinPreview.touched}
+          onCancel={() => setAskReschedule(false)}
+          onProceed={() => { setAskReschedule(false); onReschedule?.() }}
+        />
+      )}
       {inbox && (
         <ProposalPanel
           base={base} state={state} proposals={proposals} onGo={setDay} onClose={() => setInbox(false)}
@@ -557,13 +635,40 @@ export function SchedulePage({
         />
       )}
 
+      {/* 단계적 확정 — 1일차를 확정해 통보하고 나면 그 날짜는 굳는다. 확정한 뒤에도 이동은
+          막지 않되(D1), 통보한 자리에서 벗어난 사람을 재통보 대상으로 집어낸다. */}
+      <div className="day-row">
       <div className="day-tabs" aria-label="면접 일자">
         {base.dates.map((date, index) => (
-          <button key={date.iso} type="button" aria-pressed={day === index} onClick={() => setDay(index)}>
+          <button key={date.iso} type="button" aria-pressed={day === index} onClick={() => setDay(index)}
+            className={confirmedSet.has(index) ? 'is-confirmed' : undefined}>
             {index + 1}일차 {date.iso.slice(5).replace('-', '/')}({date.wd})
+            {confirmedSet.has(index) && <i className="tag confirmed" aria-label="확정됨">확정</i>}
           </button>
         ))}
       </div>
+        {confirmedSet.has(day) ? (
+          <button className="button" type="button" onClick={() => onReleaseDay?.(day)}>
+            {day + 1}일차 확정 해제
+          </button>
+        ) : (
+          <button className="button primary" type="button"
+            onClick={() => onConfirmDay?.(day, state.placed)}
+            disabled={!state.placed.some(p => p.day === day)}>
+            {day + 1}일차 확정
+          </button>
+        )}
+        {confirmedSet.size > 0 && openDays.length > 0 && onReschedule && (
+          <button className="button" type="button" onClick={() => setAskReschedule(true)}>
+            {openDays.map(d => `${d + 1}일차`).join('·')} 다시 편성
+          </button>
+        )}
+      </div>
+      {confirmedSet.has(day) && (
+        <p className="confirm-note">
+          {day + 1}일차는 확정·통보된 날짜입니다. 고칠 수는 있지만 옮긴 사람은 재통보 대상이 됩니다.
+        </p>
+      )}
 
       {/* 격자에서는 「가장 가까운 칸」이 사람의 기대와 맞는다. 그리고 끄는 동안 칸 위치를 계속
           다시 잰다 — 하루 탭을 바꾸거나 표가 스크롤되면 처음 잰 값이 어긋나기 때문이다. */}
@@ -590,7 +695,10 @@ export function SchedulePage({
                       const key = `${day}|${slot}|${room}`
                       return (
                         <Cell key={room} spot={{ day, slot, room }} occupant={grid[key]}
-                          verdict={preview?.get(key)} marks={marksBySpot.get(key) ?? []} onTip={setTip} />
+                          verdict={preview?.get(key)} marks={marksBySpot.get(key) ?? []} onTip={setTip}
+                          confirmed={!!grid[key] && notices.has(grid[key].app.id)}
+                          renotify={!!grid[key] && renotifyIds.has(grid[key].app.id)}
+                          onOpen={setDetail} />
                       )
                     })}
                   </tr>
@@ -722,11 +830,12 @@ function ViolationPanel({
    「저 10시에 안 됩니다」 민원이 오면 그 사람 일정을 바로 확인하는 자리다(미팅 39:47).
    읽기 전용이다. 여기서 고치지 않는다. */
 function PeoplePanel({
-  base, placed, onGo,
+  base, placed, onGo, onOpen,
 }: {
   readonly base: NonNullable<SchedulePageProps['schedule']>['result']
   readonly placed: readonly Placed[]
   readonly onGo: (day: number) => void
+  readonly onOpen: (p: Placed) => void
 }) {
   const [q, setQ] = useState('')
   const rows = useMemo(() => {
@@ -763,16 +872,49 @@ function PeoplePanel({
             </div>
             <div className="p-slots">
               {r.slots.map(p => (
-                <button key={`${p.day}|${p.slot}|${p.room}`} type="button" className="p-slot" onClick={() => onGo(p.day)}
-                  title={`${p.app.name} · ${p.teams.join(', ')}`}>
-                  {p.day + 1}일 {base.times[p.slot]?.label.split('–')[0] ?? `${p.slot + 1}세션`} · {p.room + 1}조
-                </button>
+                <span key={`${p.day}|${p.slot}|${p.room}`} className="p-pair">
+                  <button type="button" className="p-slot" onClick={() => onGo(p.day)}
+                    title={`${p.app.name} · ${p.teams.join(', ')}`}>
+                    {p.day + 1}일 {base.times[p.slot]?.label.split('–')[0] ?? `${p.slot + 1}세션`} · {p.room + 1}조
+                  </button>
+                  <button type="button" className="p-name" onClick={() => onOpen(p)}
+                    title={`${p.app.name} 지원자 상세`}>{p.app.name}</button>
+                </span>
               ))}
             </div>
           </li>
         ))}
         {shown.length === 0 && <li className="drawer-empty">찾는 면접관이 없습니다.</li>}
       </ul>
+    </div>
+  )
+}
+
+/* 재통보 명단 — 통보한 뒤 자리가 달라진 사람들.
+   변경 이력은 「무엇을 했나」를 시간순으로 쌓지만, 재통보에 필요한 것은 「통보한 것과 지금이
+   어떻게 다른가」다. 두 번 옮긴 사람은 이력에 두 줄이지만 재통보 명단에는 한 줄이어야 한다. */
+function RenotifyPanel({
+  base, list, onGo,
+}: {
+  readonly base: Result
+  readonly list: readonly Renotify[]
+  readonly onGo: (f: Finding) => void
+}) {
+  const dayLabel = (d: number) => `${d + 1}일차`
+  const slotLabel = (sl: number) => base.times[sl]?.label.split('–')[0] ?? `${sl + 1}세션`
+  return (
+    <div className="panel v-panel">
+      <h2>재통보 대상 {list.length}명</h2>
+      {list.length === 0
+        ? <p className="drawer-empty">확정한 날짜를 손대지 않았습니다. 다시 알릴 사람이 없습니다.</p>
+        : <ul className="h-list">{list.map(r => (
+            <li key={r.appId}>
+              <button type="button" className="link"
+                onClick={() => onGo({ day: r.now?.day ?? r.was?.day ?? 0 } as Finding)}>
+                {renotifyText(r, dayLabel, slotLabel)}
+              </button>
+            </li>
+          ))}</ul>}
     </div>
   )
 }

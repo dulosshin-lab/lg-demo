@@ -22,6 +22,29 @@ const checks = []
 const check = (name, ok, extra = '') => { checks.push([name, ok, extra]); console.log(`${ok ? '✅' : '❌'} ${name}${extra ? ` — ${extra}` : ''}`) }
 const step = s => console.log(`\n── ${s}`)
 
+/** 겨냥한 칸이 실제로 잡혔는지 보고, 어긋나면 맞춘다.
+
+    dnd-kit 은 포인터가 아니라 **끌고 있는 카드의 사각형**으로 대상을 고른다(closestCenter).
+    행 높이가 카드 내용에 따라 달라서 td 중심을 겨냥해도 이웃 칸이 잡히는 경우가 있다.
+    사람은 칸 색이 바뀌는 걸 보고 손을 조금 움직여 맞추므로 문제가 안 되지만, 스크립트는
+    맞은 줄 알고 엉뚱한 칸에 놓아 버린다 — 실제로 그 탓에 붙들었다 뗀 것이 편집으로 남았다. */
+const overSpot = () => page.evaluate(() => document.querySelector('td.over')?.dataset.spot ?? null)
+
+async function aim(x, y, spot) {
+  await page.mouse.move(x, y, { steps: 12 })
+  for (let i = 0; i < 6; i++) {
+    await page.waitForTimeout(60)
+    const over = await overSpot()
+    if (over === spot) return { x, y }
+    const want = await page.locator(`td[data-spot="${spot}"]`).boundingBox()
+    const got = over ? await page.locator(`td[data-spot="${over}"]`).boundingBox() : null
+    y += got ? (want.y + want.height / 2) - (got.y + got.height / 2) : -8
+    await page.mouse.move(x, y, { steps: 4 })
+  }
+  if ((await overSpot()) !== spot) throw new Error(`칸을 겨냥하지 못했다: ${spot} (잡힌 칸 ${await overSpot()})`)
+  return { x, y }
+}
+
 /** dnd-kit 은 PointerEvent 를 쓴다 — 사람이 끄는 것과 같은 순서로 보낸다 */
 async function dragCard(fromSel, toSel) {
   await page.locator(toSel).first().scrollIntoViewIfNeeded()
@@ -33,7 +56,9 @@ async function dragCard(fromSel, toSel) {
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2)
   await page.mouse.down()
   await page.mouse.move(a.x + a.width / 2 + 12, a.y + a.height / 2 + 12, { steps: 4 })
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 })
+  const spot = toSel.match(/data-spot="([^"]+)"/)?.[1]
+  if (spot) await aim(b.x + b.width / 2, b.y + b.height / 2, spot)
+  else await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 })
   await page.waitForTimeout(80)
   await page.mouse.up()
   await page.waitForTimeout(180)
@@ -48,13 +73,18 @@ async function holdOver(fromSel, toSel, fn) {
   const a = await page.locator(fromSel).first().boundingBox()
   const b = await page.locator(toSel).first().boundingBox()
   if (!a || !b) throw new Error(`드래그 대상 없음 ${fromSel} → ${toSel}`)
+  const home = fromSel.match(/data-spot="([^"]+)"/)?.[1]
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2)
   await page.mouse.down()
   await page.mouse.move(a.x + a.width / 2 + 12, a.y + a.height / 2 + 12, { steps: 4 })
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 })
+  const spot = toSel.match(/data-spot="([^"]+)"/)?.[1]
+  if (spot) await aim(b.x + b.width / 2, b.y + b.height / 2, spot)
+  else await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 })
   await page.waitForTimeout(160)
   try { await fn() } finally {
-    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2, { steps: 8 })
+    // 원래 칸으로 되돌려 떼야 편성표가 그대로 남는다 — 여기서도 실제로 그 칸이 잡혔는지 본다
+    if (home) await aim(a.x + a.width / 2, a.y + a.height / 2, home)
+    else await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2, { steps: 8 })
     await page.waitForTimeout(80)
     await page.mouse.up()
     await page.waitForTimeout(160)
@@ -254,8 +284,10 @@ await page.waitForTimeout(200)
 const alerts = await chipValue('내가 만든 위반')
 const masterSpot = await spotOfName(master.name)
 check('석사가 1일차로 옮겨졌다', masterSpot !== null, `${master.name} @ ${masterSpot}`)
-check('그 카드에 표식이 붙었다',
-  /has-(alert|notice)/.test(await page.locator(`td[data-spot="${masterSpot}"] .cell-card`).getAttribute('class') ?? ''))
+// 표식 클래스는 has-alert · has-new-notice · has-base-notice 세 가지다.
+// /has-(alert|notice)/ 는 has-new-notice 를 못 잡아, 우연히 중복까지 겹친 자리에서만 통과했다.
+const masterClass = await page.locator(`td[data-spot="${masterSpot}"] .cell-card`).getAttribute('class') ?? ''
+check('그 카드에 표식이 붙었다', /has-(alert|new-notice|base-notice)/.test(masterClass), masterClass)
 console.log(`   내가 만든 위반 ${alerts}건`)
 await page.screenshot({ path: `${SHOTS}/e3-학력위반.png` })
 
