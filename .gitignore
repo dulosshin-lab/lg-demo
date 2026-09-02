@@ -2,3 +2,4 @@ node_modules/
 dist/
 public/solver/highs.js
 public/solver/highs.wasm
+.DS_Store
