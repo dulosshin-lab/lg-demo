@@ -17,6 +17,8 @@ npm run build
 - `src/core/{ingest,resolve,schedule}` — 파서·매칭·편성 엔진 (본제품에서 그대로 복사)
 - `src/io/xlsx.ts` — 엑셀 읽기
 - `data/` — 테스트 픽스처 (취합파일, 팀 회신 xlsx)
+- `data/constraint-tests/` — 제약사항별 테스트 엑셀 (하드 ①②·소프트 ③④⑤·제외 규칙·파서 규칙).
+  설명은 `docs/제약사항_정리.md`, 회귀는 `tests/constraint-cases.test.ts`
 - `tests/sample_data/` — 데모 화면이 안내하는 샘플 파일
 - `docs/260831_1311_면접AX_세션핸드오프.md` — 추출 시점의 마지막 핸드오프
 
