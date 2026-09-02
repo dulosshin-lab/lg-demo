@@ -1,0 +1,41 @@
+/* 사용자 확정 본문 서체는 오프라인 셀프 호스팅 Noto Sans KR 이다.
+   LG EI Text 는 브랜드 보조 서체로 남겨 폰트 스택의 다음 순서에서 쓴다. */
+@font-face {
+  font-family: 'Noto Sans KR';
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url('noto-sans-kr-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Noto Sans KR';
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url('noto-sans-kr-500.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Noto Sans KR';
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url('noto-sans-kr-700.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'LG EI Text';
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url('LGEIText-Regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'LG EI Text';
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url('LGEIText-Bold.woff2') format('woff2');
+}
