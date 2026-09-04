@@ -35,7 +35,7 @@ const FAKE_ROSTER: LiteRoster = {
 const mobileNavOf = (markup: string) => markup.split('aria-label="라이트 데모 메뉴"')[1]?.split('</nav>')[0] ?? ''
 
 const rosterMarkup = () =>
-  renderToStaticMarkup(<RosterPage roster={FAKE_ROSTER} busy={false} onUpload={() => undefined} onNext={() => undefined} />)
+  renderToStaticMarkup(<RosterPage roster={FAKE_ROSTER} busy={false} progress={null} onUpload={() => undefined} onUploadResumes={() => undefined} onNext={() => undefined} />)
 
 describe('L1 라이트 데모 접근 가능한 셸', () => {
   it('좁은 화면용 메뉴에도 HR 경로를 모두 남긴다', () => {

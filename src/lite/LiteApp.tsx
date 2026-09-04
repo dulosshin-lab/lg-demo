@@ -6,7 +6,7 @@ import { SchedulePage } from './SchedulePage'
 import { WorkspacePage } from './WorkspacePage'
 import { DemoPage, applySide, storedSide } from './DemoPage'
 import { DEMO_PAGES } from './demoPages'
-import { buildSchedule, readRoster, rescheduleWith, type LiteRoster, type LiteSchedule } from './data'
+import { buildSchedule, readRoster, readRosterFromResumes, rescheduleWith, type LiteRoster, type LiteSchedule } from './data'
 import { editReducer, initEdit } from './edit'
 import { ConfirmReupload } from './ConfirmReupload'
 import { judge } from './violations'
@@ -117,6 +117,8 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
   const [roster, setRoster] = useState<LiteRoster | null>(null)
   const [schedule, setSchedule] = useState<LiteSchedule | null>(null)
   const [busy, setBusy] = useState(false)
+  /** 이력서 PDF 를 읽는 동안의 진행 (몇 장 중 몇 장) */
+  const [progress, setProgress] = useState<{ readonly done: number; readonly total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<{ readonly text: string; readonly seq: number } | null>(null)
   /** 편성안 식별자. 명단을 새로 올릴 때마다 새로 발급한다. */
@@ -161,27 +163,51 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
     return () => window.clearTimeout(timer)
   }, [toast])
 
+  /** 새 명단이 들어오면 그 위에 쌓였던 편성·편집·제안·확정은 전부 새 전형이 된다 */
+  const installRoster = (next: LiteRoster) => {
+    const id = ulid()
+    setRoster(next)
+    setSchedule(null)
+    setSessionId(id)
+    setRestored(false)
+    setEdit(null)
+    setProposals([])
+    setConfirms([])
+    const saved = saveSession(next, null, id)
+    if (!saved.ok) notify(saved.reason)
+  }
+
   const uploadRoster = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
     setBusy(true)
     setError(null)
     try {
-      const next = await readRoster(file)
-      const id = ulid()
-      setRoster(next)
-      setSchedule(null)
-      setSessionId(id)
-      setRestored(false)
-      setEdit(null)
-      setProposals([])
-      setConfirms([])
-      const saved = saveSession(next, null, id)
-      if (!saved.ok) notify(saved.reason)
+      installRoster(await readRoster(file))
     } catch (reason) {
       if (reason instanceof Error) setError(reason.message)
       else throw reason
     } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 이력서 PDF 폴더 → 명단. 수백 장을 읽는 동안 몇 장째인지 보여 준다 */
+  const uploadResumes = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = [...(event.target.files ?? [])]
+    if (files.length === 0) return
+    setBusy(true)
+    setError(null)
+    setProgress({ done: 0, total: files.length })
+    try {
+      // pdf.js 는 이 입구에서만 쓴다 — 처음 누를 때 내려받아 첫 화면 번들을 키우지 않는다
+      const { textItemsOf } = await import('./pdfText')
+      installRoster(await readRosterFromResumes(files, textItemsOf, (done, total) => setProgress({ done, total })))
+    } catch (reason) {
+      if (reason instanceof Error) setError(reason.message)
+      else throw reason
+    } finally {
+      setProgress(null)
       setBusy(false)
     }
   }
@@ -484,7 +510,7 @@ export function LiteApp({ initialRole = 'hr', initialPage }: LiteAppProps = {}) 
               <button className="switch" type="button" onClick={resetSession}>새로 시작</button>
             </div>
           )}
-          {page === 'roster' && <RosterPage roster={roster} busy={busy} onUpload={uploadRoster} onNext={() => setPage('schedule')} />}
+          {page === 'roster' && <RosterPage roster={roster} busy={busy} progress={progress} onUpload={uploadRoster} onUploadResumes={uploadResumes} onNext={() => setPage('schedule')} />}
           {page === 'schedule' && <SchedulePage roster={roster} schedule={schedule} busy={busy} onUpload={uploadTeams} onBack={() => setPage('roster')} onEdit={saveEdit} saved={edit} onNotify={notify} proposals={proposals} onApproveProposal={approveProposal} onRejectProposal={rejectProposal} openInbox={inboxSignal} onGoTeam={() => { setRole('lead'); setPage('t-sched') }} onWithdrawProposal={withdrawProposal}
             confirms={confirms}
             onConfirmDay={(day, placed) => {

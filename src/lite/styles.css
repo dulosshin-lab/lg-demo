@@ -123,6 +123,10 @@ h2 { margin: 0; font-size: 14.5px; }
 .roster-table td { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roster-table .blind-col { color: var(--muted); }
 .table-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+.roster-notes { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+.roster-notes summary { cursor: pointer; }
+.roster-notes ul { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow: auto; }
+.roster-notes li { margin: 2px 0; }
 .switch { display: inline-flex; align-items: center; gap: 7px; padding: 2px 11px 2px 8px; border: 1px solid var(--line); border-radius: 99px; background: var(--panel); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
 .switch b { color: var(--ink); }
 .sw { position: relative; flex: none; width: 30px; height: 17px; border-radius: 99px; background: var(--line); }

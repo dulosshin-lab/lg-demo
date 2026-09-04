@@ -6,6 +6,7 @@ import { arrange, withPlaced, type ArrangeReport } from './arrange'
 import { confirmedDays, pinsOf, type ConfirmEvent } from './confirm'
 import { DEFAULT_SETUP, toCfg, withDates, type Setup } from './setup'
 import { removedIds, touchedIds, type EditState } from './edit'
+import { buildMaster, parseResume, type ResumeParse, type ResumeRecord, type TextItem } from './resume'
 
 export type LiteCandidate = {
   readonly id: string
@@ -17,6 +18,8 @@ export type LiteCandidate = {
 
 export type LiteRoster = {
   readonly fileName: string
+  /** 어디서 온 명단인가. 저장본에 없으면(옛 세션) 취합파일로 본다 */
+  readonly source?: 'xlsx' | 'pdf'
   readonly columnCount: number
   readonly candidates: readonly LiteCandidate[]
   /** 올린 파일의 전 컬럼명 (원본 열 순서) */
@@ -57,7 +60,51 @@ export type LiteSchedule = {
 const text = (value: string | number | boolean | null): string => value === null ? '—' : String(value)
 
 export async function readRoster(file: File): Promise<LiteRoster> {
-  const parsed = parseMaster(await readFileAsSheet(file))
+  return rosterOf(parseMaster(await readFileAsSheet(file)), file.name, 'xlsx')
+}
+
+/**
+ * 이력서 PDF 묶음 → 명단. 취합파일 없이 시작하는 두 번째 입구다.
+ * PDF 를 읽는 함수(pdf.js)는 밖에서 받는다 — 이 모듈은 브라우저 없이도 돌아야 한다.
+ * 파일 순서는 이름순으로 고정한다. 같은 번호가 겹치면 먼저 읽은 것이 이기므로 순서가 결과다.
+ */
+export async function readRosterFromResumes(
+  files: readonly File[],
+  extract: (file: File) => Promise<readonly TextItem[]>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<LiteRoster> {
+  const pdfs = files
+    .filter(f => /\.pdf$/i.test(f.name))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  if (pdfs.length === 0) throw new Error('폴더에 PDF 가 없습니다')
+  /* 몇 장을 겹쳐 읽는다 — 파일 읽기와 파싱이 번갈아 기다리는 시간을 메운다.
+     결과는 자리(index)로 넣으므로 끝나는 순서와 무관하게 이름순이 지켜진다. */
+  const records: ResumeRecord[] = new Array(pdfs.length)
+  let next = 0
+  let done = 0
+  const lane = async () => {
+    while (next < pdfs.length) {
+      const k = next++
+      const file = pdfs[k]
+      let parse: ResumeParse
+      try {
+        parse = parseResume(await extract(file))
+      } catch (e) {
+        parse = { form: null, fields: {}, warnings: [`읽지 못함: ${e instanceof Error ? e.message : String(e)}`] }
+      }
+      records[k] = { file: file.name, parse }
+      onProgress?.(++done, pdfs.length)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, pdfs.length) }, lane))
+  const folder = (pdfs[0] as File & { webkitRelativePath?: string }).webkitRelativePath?.split('/')[0]
+  const label = `${folder ? `${folder}/` : '이력서 PDF'} (PDF ${pdfs.length}개)`
+  const roster = rosterOf(buildMaster(records), label, 'pdf')
+  if (roster.candidates.length === 0) throw new Error(`PDF ${pdfs.length}개 중 이력서로 읽힌 것이 없습니다`)
+  return roster
+}
+
+function rosterOf(parsed: ParsedMaster, fileName: string, source: 'xlsx' | 'pdf'): LiteRoster {
   const candidates = [...parsed.rows.values()].map(row => {
     const educationCode = text(row['최종학력_학교유형'])
     return {
@@ -72,7 +119,7 @@ export async function readRoster(file: File): Promise<LiteRoster> {
   const rows = [...parsed.rows.values()]
     .slice(0, ROSTER_ROW_LIMIT)
     .map(row => headers.map(header => text(row[header] ?? null)))
-  return { fileName: file.name, columnCount: parsed.columns.size, candidates, headers, rows, parsed }
+  return { fileName, source, columnCount: parsed.columns.size, candidates, headers, rows, parsed }
 }
 
 export async function buildSchedule(

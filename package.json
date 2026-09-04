@@ -11,7 +11,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "verify:browser": "node scripts/browser-check.mjs && node scripts/browser-editor.mjs && node scripts/browser-proposals.mjs && node scripts/browser-confirm.mjs && node scripts/browser-applicant.mjs && node scripts/browser-setup.mjs",
+    "verify:browser": "node scripts/browser-check.mjs && node scripts/browser-editor.mjs && node scripts/browser-proposals.mjs && node scripts/browser-confirm.mjs && node scripts/browser-applicant.mjs && node scripts/browser-setup.mjs && node scripts/browser-resume.mjs",
     "dev:lan": "node scripts/copy-highs.mjs && vite --host"
   },
   "dependencies": {
@@ -19,6 +19,7 @@
     "exceljs": "^4.4.0",
     "highs": "^1.15.2",
     "lucide-react": "^1.27.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
